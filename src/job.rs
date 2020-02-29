@@ -98,12 +98,12 @@ impl<R: BufRead> Read for JobDriver<R> {
                 // work
                 let mut buffers = Buffers::new(readbuf, &mut buf[out_pos..], self.input_ended);
                 let res = unsafe { raw::rs_job_iter(*self.job, buffers.as_raw()) };
-                if res != raw::RS_DONE && res != raw::RS_BLOCKED {
+                let read = cap - buffers.available_input();
+                let written = out_cap - buffers.available_output();
+                if res != raw::RS_DONE && (res != raw::RS_BLOCKED || (read == 0 && written == 0)) {
                     let err = Error::from(res);
                     return Err(io::Error::new(io::ErrorKind::Other, err));
                 }
-                let read = cap - buffers.available_input();
-                let written = out_cap - buffers.available_output();
                 (res, read, written)
             };
 
