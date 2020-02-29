@@ -461,8 +461,15 @@ extern "C" fn patch_copy_cb(opaque: *mut libc::c_void,
         slice::from_raw_parts_mut(buf, *len)
     };
     try_or_rs_error!(input.seek(io::SeekFrom::Start(pos as u64)));
-    try_or_rs_error!(input.read(output));
-    raw::RS_DONE
+    let read_len = try_or_rs_error!(input.read(output));
+    if read_len == 0 {
+        raw::RS_INPUT_ENDED
+    } else {
+        unsafe {
+            *len = read_len;
+        }
+        raw::RS_DONE
+    }
 }
 
 
