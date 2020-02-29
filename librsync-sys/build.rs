@@ -23,6 +23,7 @@ fn main() {
        .include("librsync/static")
        .include("librsync/src")
        .define("STDC_HEADERS", Some("1"))
+       .define("NDEBUG", Some("1"))
        .file("librsync/static/prototab.c")
        .file("librsync/src/base64.c")
        .file("librsync/src/buf.c")
