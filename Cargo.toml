@@ -1,7 +1,8 @@
 [package]
 name = "librsync"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Michele Bertasi <@brt_device>"]
+edition = "2018"
 license = "MIT/Apache-2.0"
 readme = "README.md"
 keywords = ["librsync", "rsync", "backup"]
@@ -23,4 +24,4 @@ unstable = ["lints", "nightly"] # for building with travis-cargo
 libc = "0.2"
 librsync-sys = { version = "0.1", path = "librsync-sys" }
 clippy = { version = "< 1", optional = true }
-log = { version = "0.3", optional = true }
+log = { version = "0.4", optional = true }

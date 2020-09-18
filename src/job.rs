@@ -3,15 +3,13 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr;
 
-use {Error, raw};
-
+use crate::{raw, Error};
 
 pub struct JobDriver<R> {
     input: R,
     job: Job,
     input_ended: bool,
 }
-
 
 pub struct Job(pub *mut raw::rs_job_t);
 
@@ -21,12 +19,11 @@ struct Buffers<'a> {
     _phantom: PhantomData<&'a u8>,
 }
 
-
 impl<R: BufRead> JobDriver<R> {
     pub fn new(input: R, job: Job) -> Self {
         JobDriver {
-            input: input,
-            job: job,
+            input,
+            job,
             input_ended: false,
         }
     }
@@ -41,7 +38,7 @@ impl<R: BufRead> JobDriver<R> {
     pub fn consume_input(&mut self) -> io::Result<()> {
         loop {
             let (res, read, cap) = {
-                let readbuf = try!(self.input.fill_buf());
+                let readbuf = self.input.fill_buf()?;
                 let cap = readbuf.len();
                 if cap == 0 {
                     self.input_ended = true;
@@ -65,8 +62,10 @@ impl<R: BufRead> JobDriver<R> {
                 raw::RS_BLOCKED => {
                     if cap > 0 {
                         // the block is due to a missing output buffer
-                        return Err(io::Error::new(io::ErrorKind::WouldBlock,
-                                                  "cannot consume input without an output buffer"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::WouldBlock,
+                            "cannot consume input without an output buffer",
+                        ));
                     }
                 }
                 _ => {
@@ -89,7 +88,7 @@ impl<R: BufRead> Read for JobDriver<R> {
 
         loop {
             let (res, read, written) = {
-                let readbuf = try!(self.input.fill_buf());
+                let readbuf = self.input.fill_buf()?;
                 let cap = readbuf.len();
                 if cap == 0 {
                     self.input_ended = true;
@@ -120,7 +119,6 @@ impl<R: BufRead> Read for JobDriver<R> {
 }
 
 unsafe impl Send for Job {}
-
 
 impl Deref for Job {
     type Target = *mut raw::rs_job_t;

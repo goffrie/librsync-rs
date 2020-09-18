@@ -88,28 +88,31 @@
 //! assert_eq!(out, new);
 //! ```
 
-#![deny(missing_copy_implementations,
-        missing_docs,
-        trivial_casts, trivial_numeric_casts,
-        unstable_features,
-        unused_import_braces, unused_qualifications)]
-
+#![deny(
+    missing_copy_implementations,
+    missing_docs,
+    trivial_casts,
+    trivial_numeric_casts,
+    unstable_features,
+    unused_import_braces,
+    unused_qualifications
+)]
 #![cfg_attr(feature = "nightly", allow(unstable_features))]
 #![cfg_attr(feature = "lints", feature(plugin))]
 #![cfg_attr(feature = "lints", plugin(clippy))]
 
-extern crate librsync_sys as raw;
 extern crate libc;
+extern crate librsync_sys as raw;
 #[cfg(feature = "log")]
 #[macro_use]
 extern crate log;
 
-mod macros;
 mod job;
 mod logfwd;
+mod macros;
 pub mod whole;
 
-use job::{Job, JobDriver};
+use crate::job::{Job, JobDriver};
 
 use std::cell::{RefCell, RefMut};
 use std::error;
@@ -120,7 +123,6 @@ use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
 use std::slice;
-
 
 /// The signature type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,16 +182,14 @@ pub struct Delta<R> {
 pub struct Patch<'a, B: 'a, D> {
     driver: JobDriver<D>,
     base: Rc<RefCell<B>>,
-    raw: Box<Rc<RefCell<ReadAndSeek + 'a>>>,
+    raw: Box<Rc<RefCell<dyn ReadAndSeek + 'a>>>,
 }
-
 
 struct Sumset(*mut raw::rs_signature_t);
 
 // workaround for E0225
 trait ReadAndSeek: Read + Seek {}
 impl<T: Read + Seek> ReadAndSeek for T {}
-
 
 impl<R: Read> Signature<BufReader<R>> {
     /// Creates a new signature stream with default parameters.
@@ -208,11 +208,12 @@ impl<R: Read> Signature<BufReader<R>> {
     /// and the delta longer), and the size of strong signatures in bytes as `strong_len`
     /// parameter. If it is non-zero the signature will be truncated to that amount of bytes.
     /// The last parameter specifies which version of the signature format to be used.
-    pub fn with_options(input: R,
-                        block_len: usize,
-                        strong_len: usize,
-                        sig_magic: SignatureType)
-                        -> Result<Self> {
+    pub fn with_options(
+        input: R,
+        block_len: usize,
+        strong_len: usize,
+        sig_magic: SignatureType,
+    ) -> Result<Self> {
         Self::with_buf_read(BufReader::new(input), block_len, strong_len, sig_magic)
     }
 }
@@ -224,18 +225,21 @@ impl<R: BufRead> Signature<R> {
     /// you already have a `BufRead` as input stream, since it avoids wrapping the input stream
     /// into another `BufRead` instance. See `with_options` constructor for details on the other
     /// parameters.
-    pub fn with_buf_read(input: R,
-                         block_len: usize,
-                         strong_len: usize,
-                         sig_magic: SignatureType)
-                         -> Result<Self> {
+    pub fn with_buf_read(
+        input: R,
+        block_len: usize,
+        strong_len: usize,
+        sig_magic: SignatureType,
+    ) -> Result<Self> {
         logfwd::init();
 
         let job = unsafe { raw::rs_sig_begin(block_len, strong_len, sig_magic.as_raw()) };
         if job.is_null() {
             return Err(Error::BadMagic);
         }
-        Ok(Signature { driver: JobDriver::new(input, Job(job)) })
+        Ok(Signature {
+            driver: JobDriver::new(input, Job(job)),
+        })
     }
 
     /// Unwraps this stream, returning the underlying input stream.
@@ -249,7 +253,6 @@ impl<R: BufRead> Read for Signature<R> {
         self.driver.read(buf)
     }
 }
-
 
 impl<R: Read> Delta<BufReader<R>> {
     /// Creates a new delta stream.
@@ -278,7 +281,7 @@ impl<R: BufRead> Delta<R> {
             let job = raw::rs_loadsig_begin(&mut sumset);
             assert!(!job.is_null());
             let mut job = JobDriver::new(BufReader::new(base_sig), Job(job));
-            try!(job.consume_input());
+            job.consume_input()?;
             let sumset = Sumset(sumset);
             let res = raw::rs_build_hash_table(*sumset);
             if res != raw::RS_DONE {
@@ -288,7 +291,10 @@ impl<R: BufRead> Delta<R> {
         };
         let job = unsafe { raw::rs_delta_begin(*sumset) };
         if job.is_null() {
-            return Err(io_err(io::ErrorKind::InvalidData, "invalid signature given"));
+            return Err(io_err(
+                io::ErrorKind::InvalidData,
+                "invalid signature given",
+            ));
         }
         Ok(Delta {
             driver: JobDriver::new(new, Job(job)),
@@ -307,7 +313,6 @@ impl<R: BufRead> Read for Delta<R> {
         self.driver.read(buf)
     }
 }
-
 
 impl<'a, B: Read + Seek + 'a, D: Read> Patch<'a, B, BufReader<D>> {
     /// Creates a new patch stream.
@@ -331,12 +336,12 @@ impl<'a, B: Read + Seek + 'a, D: BufRead> Patch<'a, B, D> {
         logfwd::init();
 
         let base = Rc::new(RefCell::new(base));
-        let cb_data: Box<Rc<RefCell<ReadAndSeek>>> = Box::new(base.clone());
+        let cb_data: Box<Rc<RefCell<dyn ReadAndSeek>>> = Box::new(base.clone());
         let job = unsafe { raw::rs_patch_begin(patch_copy_cb, mem::transmute(&*cb_data)) };
         assert!(!job.is_null());
         Ok(Patch {
             driver: JobDriver::new(delta, Job(job)),
-            base: base,
+            base,
             raw: cb_data,
         })
     }
@@ -362,31 +367,23 @@ impl<'a, B, D: BufRead> Read for Patch<'a, B, D> {
 }
 
 unsafe impl<'a, B: 'a, D> Send for Patch<'a, B, D>
-    where B: Send,
-          D: Send
+where
+    B: Send,
+    D: Send,
 {
 }
 
-
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Io(ref err) => err.description(),
-            Error::Mem => "out of memory",
-            Error::BadMagic => "bad magic number given",
-            Error::Unimplemented => "unimplemented feature",
-            Error::Internal => "internal error",
-            Error::Unknown(_) => "unknown error from librsync",
-        }
-    }
-}
+impl error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
         match *self {
             Error::Io(ref e) => write!(fmt, "{}", e),
+            Error::Mem => write!(fmt, "out of memory"),
+            Error::BadMagic => write!(fmt, "bad magic number given"),
+            Error::Unimplemented => write!(fmt, "unimplemented feature"),
+            Error::Internal => write!(fmt, "internal error"),
             Error::Unknown(n) => write!(fmt, "unknown error {} from native library", n),
-            _ => write!(fmt, "{}", std::error::Error::description(self)),
         }
     }
 }
@@ -416,16 +413,14 @@ impl From<raw::rs_result> for Error {
     }
 }
 
-
 impl SignatureType {
-    fn as_raw(&self) -> raw::rs_magic_number {
-        match *self {
+    fn as_raw(self) -> raw::rs_magic_number {
+        match self {
             SignatureType::MD4 => raw::RS_MD4_SIG_MAGIC,
             SignatureType::Blake2 => raw::RS_BLAKE2_SIG_MAGIC,
         }
     }
 }
-
 
 impl Drop for Sumset {
     fn drop(&mut self) {
@@ -446,14 +441,14 @@ impl Deref for Sumset {
 
 unsafe impl Send for Sumset {}
 
-
-extern "C" fn patch_copy_cb(opaque: *mut libc::c_void,
-                            pos: raw::rs_long_t,
-                            len: *mut libc::size_t,
-                            buf: *mut *mut libc::c_void)
-                            -> raw::rs_result {
-    let mut input: RefMut<ReadAndSeek> = unsafe {
-        let h: *mut Rc<RefCell<ReadAndSeek>> = mem::transmute(opaque);
+extern "C" fn patch_copy_cb(
+    opaque: *mut libc::c_void,
+    pos: raw::rs_long_t,
+    len: *mut libc::size_t,
+    buf: *mut *mut libc::c_void,
+) -> raw::rs_result {
+    let mut input: RefMut<dyn ReadAndSeek> = unsafe {
+        let h: *mut Rc<RefCell<dyn ReadAndSeek>> = mem::transmute(opaque);
         (*h).borrow_mut()
     };
     let output = unsafe {
@@ -472,13 +467,12 @@ extern "C" fn patch_copy_cb(opaque: *mut libc::c_void,
     }
 }
 
-
 fn io_err<E>(kind: io::ErrorKind, e: E) -> Error
-    where E: Into<Box<error::Error + Send + Sync>>
+where
+    E: Into<Box<dyn error::Error + Send + Sync>>,
 {
     Error::Io(io::Error::new(kind, e))
 }
-
 
 #[cfg(test)]
 mod test {
@@ -491,17 +485,20 @@ mod test {
 
     // generated with `rdiff signature -b 10 -S 5 data data.sig`
     fn data_signature() -> Vec<u8> {
-        vec![0x72, 0x73, 0x01, 0x36, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x05, 0x1b, 0x21,
-             0x04, 0x8b, 0xad, 0x3c, 0xbd, 0x19, 0x09, 0x1d, 0x1b, 0x04, 0xf0, 0x9d, 0x1f, 0x64,
-             0x31, 0xde, 0x15, 0xf4, 0x04, 0x87, 0x60, 0x96, 0x19, 0x50, 0x39]
+        vec![
+            0x72, 0x73, 0x01, 0x36, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x05, 0x1b, 0x21,
+            0x04, 0x8b, 0xad, 0x3c, 0xbd, 0x19, 0x09, 0x1d, 0x1b, 0x04, 0xf0, 0x9d, 0x1f, 0x64,
+            0x31, 0xde, 0x15, 0xf4, 0x04, 0x87, 0x60, 0x96, 0x19, 0x50, 0x39,
+        ]
     }
 
     // generated with `rdiff delta data.sig data2 data2.delta`
     fn data2_delta() -> Vec<u8> {
-        vec![0x72, 0x73, 0x02, 0x36, 0x41, 0x10, 0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20,
-             0x61, 0x6e, 0x6f, 0x74, 0x68, 0x65, 0x72, 0x20, 0x45, 0x0a, 0x13, 0x00]
+        vec![
+            0x72, 0x73, 0x02, 0x36, 0x10, 0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61,
+            0x6e, 0x6f, 0x74, 0x68, 0x65, 0x72, 0x20, 0x45, 0x0a, 0x13, 0x00,
+        ]
     }
-
 
     #[test]
     fn signature() {
@@ -590,10 +587,14 @@ mod test {
     #[test]
     fn trivial_large_file() {
         let data = vec![0; 65536];
-        let mut sig = Signature::with_options(Cursor::new(&data), 16384, 5, SignatureType::MD4).unwrap();
+        let mut sig =
+            Signature::with_options(Cursor::new(&data), 16384, 5, SignatureType::MD4).unwrap();
         let delta = Delta::new(Cursor::new(&data), &mut sig).unwrap();
         let mut computed_new = vec![];
-        Patch::new(Cursor::new(&data), delta).unwrap().read_to_end(&mut computed_new).unwrap();
+        Patch::new(Cursor::new(&data), delta)
+            .unwrap()
+            .read_to_end(&mut computed_new)
+            .unwrap();
         assert_eq!(computed_new, data);
     }
 }
